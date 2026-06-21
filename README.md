@@ -16,11 +16,13 @@ ist die **größte zusammenhängende dunkle Struktur** des Blatts.
 2. Über eine **Zusammenhangsanalyse (8er-Nachbarschaft)** werden alle dunklen
    Komponenten samt Bounding-Box bestimmt. Komponenten, die den Bildrand
    berühren (Scan-Schatten), werden ignoriert.
-3. Große Komponenten in der linken Blatthälfte gelten als **Cartoon-Panels**
-   (der Kalender rechts wird damit ausgeschlossen). Ein Cartoon kann aus
-   **mehreren Panels** bestehen – benachbarte Panels (übereinander, nebeneinander
-   oder als Raster, z. B. 2x2) werden über ihre Adjazenz zu einem Bereich
-   vereinigt.
+3. Große, **umrandete** Komponenten (große Bounding-Box bei niedrigem Füllgrad)
+   gelten als **Cartoon-Panels**. Der Kalender besteht aus Text und liefert keine
+   solchen Komponenten – selbst große Ziffern sind zu schmal oder zu kompakt
+   gefüllt. Ein Cartoon kann aus **mehreren Panels** bestehen; da ein Blatt genau
+   einen Cartoon trägt, werden **alle** erkannten Panels zu einem Bereich
+   vereinigt – egal ob einzeln, gestapelt, nebeneinander oder als Raster (z. B.
+   2x2) und unabhängig von der Größe der Zwischenräume.
 4. Eine **Bildunterschrift** direkt unter den Panels wird mit erfasst: Kleine
    Komponenten im Band unterhalb der Panels werden ausgehend von der
    Panel-Spalte horizontal verkettet. Eine größere Lücke (der Bundsteg zum
