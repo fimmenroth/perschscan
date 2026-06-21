@@ -16,24 +16,25 @@ ist die **größte zusammenhängende dunkle Struktur** des Blatts.
 2. Über eine **Zusammenhangsanalyse (8er-Nachbarschaft)** werden alle dunklen
    Komponenten samt Bounding-Box bestimmt. Komponenten, die den Bildrand
    berühren (Scan-Schatten), werden ignoriert.
-3. **Cartoon-Panels** sind umrandete Kästen (Komponenten mit niedrigem
-   Füllgrad). Die Auswahl ist bewusst **nicht** an die Blattgröße gekoppelt –
-   der Cartoon darf klein in einer großen, weißen Scanfläche liegen: Maßstab ist
-   der größte gefundene Kasten, und die etwa gleich großen Panels werden dazu
-   genommen. Kleinere Kästen (Sprech-/Textblasen) und gefüllte Elemente (große
-   Kalenderziffern) scheiden aus. Da ein Blatt genau einen Cartoon trägt, werden
-   **alle** Panels zu einem Bereich vereinigt – egal ob einzeln, gestapelt,
-   nebeneinander oder als Raster (z. B. 2x2).
+3. **Cartoon-Panels** sind die großen rechteckigen Inhaltsblöcke – egal ob
+   heller, umrandeter Kasten oder gefüllte (dunkle) Fläche. Die Auswahl ist
+   bewusst **nicht** an Blattgröße oder Füllgrad gekoppelt: Maßstab ist der
+   größte gefundene Block, und alle Blöcke in dessen Größenordnung gelten als
+   Panels. Kleinere Elemente (Sprech-/Textblasen, Kalendertext, große
+   Kalenderziffern) liegen deutlich darunter und fallen heraus. Da ein Blatt
+   genau einen Cartoon trägt, werden **alle** Panels zu einem Bereich vereinigt –
+   egal ob einzeln, gestapelt, nebeneinander oder als Raster (z. B. 2x2).
 4. Eine **Bildunterschrift** direkt unter den Panels wird mit erfasst: Kleine
    Komponenten im Band unterhalb der Panels werden ausgehend von der
    Panel-Spalte horizontal verkettet. Eine größere Lücke (der Bundsteg zum
    Kalender) beendet die Verkettung, sodass der Kalender nicht hineinrutscht.
    Mehrzeilige Unterschriften werden komplett erfasst.
-5. Vor dem Zuschnitt wird der Cartoon **lotrecht ausgerichtet**: Über das
-   umschließende Minimal-Rechteck des größten Panels wird die Schräglage
-   bestimmt und die Seite gegengedreht, sodass der Rahmen achsparallel steht
-   (Bilinear-Interpolation, neue Flächen weiß). Das geschieht automatisch bei
-   jedem Lauf.
+5. Vor dem Zuschnitt wird der Cartoon **lotrecht ausgerichtet**: Über ein
+   Projektionsprofil der Panel-Pixel wird die Schräglage bestimmt (der Winkel,
+   bei dem die geraden Panelkanten am schärfsten zusammenfallen) und die Seite
+   gegengedreht, sodass der Rahmen achsparallel steht (Bilinear-Interpolation,
+   neue Flächen weiß). Das ist auch für gefüllte/dunkle Panels robust und
+   geschieht automatisch bei jedem Lauf.
 6. Um das Ergebnis kommt ein **Randabstand**, dann wird das Original
    zugeschnitten und gespeichert.
 
