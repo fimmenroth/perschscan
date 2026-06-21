@@ -155,22 +155,34 @@ final class FrameDetector {
     }
 
     /**
-     * Liefert die Cartoon-Panels: große, <em>umrandete</em> Komponenten.
+     * Liefert die Cartoon-Panels: große, <em>umrandete</em> Kästen.
      *
-     * <p>Ein Panel ist ein Kasten mit dünnem Rahmen und überwiegend weißer
-     * Fläche – also eine große Bounding-Box bei niedrigem Füllgrad. Der Kalender
-     * rechts besteht aus Text und liefert keine so großen Komponenten; selbst
-     * große Ziffern (z. B. „23“) sind entweder zu schmal oder zu kompakt gefüllt.
-     * Dadurch lässt sich auf die feste Beschränkung auf die linke Blatthälfte
-     * verzichten – Panels werden auch erkannt, wenn das Raster breiter ist oder
-     * über die Blattmitte hinausragt.</p>
+     * <p>Ein Panel ist ein Kasten mit dünnem Rahmen und überwiegend weißer Fläche
+     * – also eine Komponente mit niedrigem Füllgrad. Die Auswahl ist bewusst
+     * <em>nicht</em> an die Blattgröße gekoppelt (der Cartoon kann klein in einer
+     * großen, weißen Scanfläche liegen): Maßstab ist der größte gefundene Kasten.
+     * Die Panels eines Cartoons sind etwa gleich groß; deutlich kleinere Kästen
+     * (Sprech-/Textblasen) fallen unter die Größenschwelle, und gefüllte Elemente
+     * wie große Kalenderziffern scheiden über den Füllgrad aus.</p>
      */
     private static List<Component> selectPanels(List<Component> components, int w, int h) {
-        List<Component> panels = new ArrayList<>();
+        // Box-artige Komponenten oberhalb einer kleinen Mindestgröße (gegen Rauschen).
+        List<Component> boxes = new ArrayList<>();
+        long maxArea = 0;
         for (Component c : components) {
-            boolean bigEnough = c.width() > w * 0.12 && c.height() > h * 0.03;
-            boolean framedBox = c.fillRatio() < 0.5;
-            if (bigEnough && framedBox) {
+            boolean minSize = c.width() > w * 0.02 && c.height() > h * 0.02;
+            boolean hollow = c.fillRatio() < 0.4;
+            if (minSize && hollow) {
+                boxes.add(c);
+                maxArea = Math.max(maxArea, c.bboxArea());
+            }
+        }
+
+        // Panels = die Kästen, die in der Größenordnung des größten liegen.
+        long minPanelArea = (long) (0.45 * maxArea);
+        List<Component> panels = new ArrayList<>();
+        for (Component c : boxes) {
+            if (c.bboxArea() >= minPanelArea) {
                 panels.add(c);
             }
         }
