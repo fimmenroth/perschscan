@@ -25,7 +25,12 @@ ist die **größte zusammenhängende dunkle Struktur** des Blatts.
    Panel-Spalte horizontal verkettet. Eine größere Lücke (der Bundsteg zum
    Kalender) beendet die Verkettung, sodass der Kalender nicht hineinrutscht.
    Mehrzeilige Unterschriften werden komplett erfasst.
-5. Um das Ergebnis kommt ein **Randabstand**, dann wird das Original
+5. Vor dem Zuschnitt wird der Cartoon **lotrecht ausgerichtet**: Über das
+   umschließende Minimal-Rechteck des größten Panels wird die Schräglage
+   bestimmt und die Seite gegengedreht, sodass der Rahmen achsparallel steht
+   (Bilinear-Interpolation, neue Flächen weiß). Das geschieht automatisch bei
+   jedem Lauf.
+6. Um das Ergebnis kommt ein **Randabstand**, dann wird das Original
    zugeschnitten und gespeichert.
 
 Die Analyse läuft auf einer herunterskalierten Kopie (schnell und
@@ -73,6 +78,9 @@ Dateien werden nicht überschrieben.
 
 ## Hinweise
 
+* Cartoons werden vor dem Zuschnitt automatisch lotrecht ausgerichtet
+  (Schräglage-Korrektur). Die manuelle `--rotate`-Drehung um 90° wird zuerst
+  angewandt, danach die automatische Feinausrichtung.
 * Mehrteilige Cartoons (mehrere gestapelte Panels) und Bildunterschriften
   unterhalb des Kastens werden mit zugeschnitten.
 * Wird auf einem Blatt kein plausibler Cartoon gefunden, wird die Seite mit

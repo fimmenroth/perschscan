@@ -117,8 +117,9 @@ public final class CartoonCropper {
         for (Path file : inputs) {
             for (BufferedImage page : loadPages(file)) {
                 BufferedImage oriented = rotate(page, quarterTurns);
+                BufferedImage straight = deskew(oriented);
                 String label = file.getFileName().toString();
-                if (process(oriented, label)) {
+                if (process(straight, label)) {
                     saved++;
                 }
             }
@@ -173,6 +174,52 @@ public final class CartoonCropper {
             }
         }
         return pages;
+    }
+
+    /** Untergrenze (Grad), ab der eine Schräglage korrigiert wird. */
+    private static final double MIN_SKEW_DEGREES = 0.15;
+    /** Obergrenze (Grad); größere Schätzungen gelten als unzuverlässig. */
+    private static final double MAX_SKEW_DEGREES = 20.0;
+
+    /**
+     * Richtet den Cartoon lotrecht aus: ermittelt die Schräglage und dreht die
+     * Seite gegen, sodass der Rahmen achsparallel steht. Sehr kleine oder
+     * unplausibel große Schätzungen werden ignoriert.
+     */
+    private static BufferedImage deskew(BufferedImage page) {
+        double skew = FrameDetector.estimateSkewDegrees(page);
+        if (Math.abs(skew) < MIN_SKEW_DEGREES || Math.abs(skew) > MAX_SKEW_DEGREES) {
+            return page;
+        }
+        System.out.printf(Locale.ROOT, "  ~ Schräglage %.2f° korrigiert.%n", skew);
+        return rotateArbitrary(page, -skew);
+    }
+
+    /**
+     * Dreht ein Bild um einen beliebigen Winkel (Grad, im Uhrzeigersinn).
+     * Die Leinwand wird vergrößert, damit nichts abgeschnitten wird; neue
+     * Flächen werden weiß gefüllt (wie das Kalenderpapier).
+     */
+    private static BufferedImage rotateArbitrary(BufferedImage src, double degrees) {
+        double rad = Math.toRadians(degrees);
+        double sin = Math.abs(Math.sin(rad));
+        double cos = Math.abs(Math.cos(rad));
+        int w = src.getWidth();
+        int h = src.getHeight();
+        int nw = (int) Math.ceil(w * cos + h * sin);
+        int nh = (int) Math.ceil(w * sin + h * cos);
+
+        BufferedImage dst = new BufferedImage(nw, nh, BufferedImage.TYPE_INT_RGB);
+        java.awt.Graphics2D g = dst.createGraphics();
+        g.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION,
+                java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+        g.setColor(java.awt.Color.WHITE);
+        g.fillRect(0, 0, nw, nh);
+        g.translate((nw - w) / 2.0, (nh - h) / 2.0);
+        g.rotate(rad, w / 2.0, h / 2.0);
+        g.drawImage(src, 0, 0, null);
+        g.dispose();
+        return dst;
     }
 
     /**

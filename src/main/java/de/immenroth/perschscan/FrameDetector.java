@@ -58,18 +58,17 @@ final class FrameDetector {
         }
     }
 
+    /** Binärmaske in Analyse-Auflösung samt Skalierungsfaktor. */
+    private record Mask(boolean[] dark, int w, int h, int scale) {
+    }
+
     /**
-     * Ermittelt die Bounding-Box des Cartoons (alle Panels + Bildunterschrift +
-     * Randabstand) im übergebenen Bild.
-     *
-     * @param source Originalbild des Kalenderblatts
-     * @return Rechteck in Originalkoordinaten oder {@code null}, wenn kein
-     *         plausibler Cartoon gefunden wurde
+     * Erzeugt die herunterskalierte Binärmaske (dunkle Vordergrundpixel) per
+     * Otsu-Schwellwert. {@code null}, wenn das Bild zu klein ist.
      */
-    static Rectangle detectFrame(BufferedImage source) {
+    private static Mask buildMask(BufferedImage source) {
         int srcW = source.getWidth();
         int srcH = source.getHeight();
-
         int maxEdge = Math.max(srcW, srcH);
         int scale = Math.max(1, (int) Math.round(maxEdge / (double) ANALYSIS_MAX_EDGE));
         int w = srcW / scale;
@@ -88,8 +87,191 @@ final class FrameDetector {
         for (int i = 0; i < gray.length; i++) {
             dark[i] = gray[i] <= threshold;
         }
+        return new Mask(dark, w, h, scale);
+    }
 
-        List<Component> components = findComponents(dark, w, h);
+    /**
+     * Schätzt die Schräglage des Cartoons in Grad. Positiver Wert = Vorlage ist
+     * im Uhrzeigersinn verdreht. Um sie lotrecht auszurichten, dreht der Aufrufer
+     * das Bild um den negativen Rückgabewert. {@code 0}, wenn keine zuverlässige
+     * Schätzung möglich ist.
+     *
+     * <p>Grundlage ist das umschließende Minimal-Rechteck des größten
+     * Cartoon-Panels: dessen Kantenneigung gegenüber der Bildachse ist die
+     * Schräglage.</p>
+     */
+    static double estimateSkewDegrees(BufferedImage source) {
+        Mask mask = buildMask(source);
+        if (mask == null) {
+            return 0;
+        }
+        int w = mask.w();
+        int h = mask.h();
+        boolean[] dark = mask.dark();
+
+        List<Component> panels = selectPanels(findComponents(dark, w, h), w, h);
+        Component primary = primaryPanel(panels);
+        if (primary == null) {
+            return 0;
+        }
+
+        // Alle dunklen Punkte im Bereich des Panels einsammeln. Da das Panel der
+        // äußerste dunkle Block in seiner eigenen Bounding-Box ist, beschreibt die
+        // konvexe Hülle dieser Punkte die vier Rahmenecken.
+        List<int[]> points = new ArrayList<>();
+        for (int y = primary.minY; y <= primary.maxY; y++) {
+            int row = y * w;
+            for (int x = primary.minX; x <= primary.maxX; x++) {
+                if (dark[row + x]) {
+                    points.add(new int[]{x, y});
+                }
+            }
+        }
+        if (points.size() < 8) {
+            return 0;
+        }
+
+        List<int[]> hull = convexHull(points);
+        if (hull.size() < 3) {
+            return 0;
+        }
+        return normalizeSkew(minAreaRectAngleDeg(hull));
+    }
+
+    /** Reduziert einen Kantenwinkel auf die Schräglage im Bereich (-45, 45]. */
+    private static double normalizeSkew(double angleDeg) {
+        double a = angleDeg % 90.0;
+        if (a > 45) {
+            a -= 90;
+        } else if (a <= -45) {
+            a += 90;
+        }
+        return a;
+    }
+
+    /** Große Komponenten in der linken Blatthälfte (Cartoon-Panels). */
+    private static List<Component> selectPanels(List<Component> components, int w, int h) {
+        List<Component> panels = new ArrayList<>();
+        for (Component c : components) {
+            boolean leftHalf = c.centerX() < w * 0.5;
+            boolean bigEnough = c.width() > w * 0.12 && c.height() > h * 0.03;
+            if (leftHalf && bigEnough) {
+                panels.add(c);
+            }
+        }
+        return panels;
+    }
+
+    /** Größtes Panel (nach Bounding-Box-Fläche) oder {@code null}. */
+    private static Component primaryPanel(List<Component> panels) {
+        Component primary = null;
+        for (Component c : panels) {
+            if (primary == null || c.bboxArea() > primary.bboxArea()) {
+                primary = c;
+            }
+        }
+        return primary;
+    }
+
+    /** Konvexe Hülle (Andrew's Monotone Chain), gegen den Uhrzeigersinn. */
+    private static List<int[]> convexHull(List<int[]> pts) {
+        pts.sort((a, b) -> a[0] != b[0] ? Integer.compare(a[0], b[0]) : Integer.compare(a[1], b[1]));
+        int n = pts.size();
+        int[][] hull = new int[2 * n][];
+        int k = 0;
+        for (int i = 0; i < n; i++) {
+            int[] p = pts.get(i);
+            while (k >= 2 && cross(hull[k - 2], hull[k - 1], p) <= 0) {
+                k--;
+            }
+            hull[k++] = p;
+        }
+        int lower = k + 1;
+        for (int i = n - 2; i >= 0; i--) {
+            int[] p = pts.get(i);
+            while (k >= lower && cross(hull[k - 2], hull[k - 1], p) <= 0) {
+                k--;
+            }
+            hull[k++] = p;
+        }
+        List<int[]> result = new ArrayList<>(k - 1);
+        for (int i = 0; i < k - 1; i++) {
+            result.add(hull[i]);
+        }
+        return result;
+    }
+
+    private static long cross(int[] o, int[] a, int[] b) {
+        return (long) (a[0] - o[0]) * (b[1] - o[1]) - (long) (a[1] - o[1]) * (b[0] - o[0]);
+    }
+
+    /**
+     * Winkel der längeren Kante des flächenkleinsten umschließenden Rechtecks
+     * (Rotating Calipers über die Hüllkanten), in Grad gegenüber der x-Achse.
+     */
+    private static double minAreaRectAngleDeg(List<int[]> hull) {
+        int n = hull.size();
+        double bestArea = Double.MAX_VALUE;
+        double bestAngle = 0;
+
+        for (int i = 0; i < n; i++) {
+            int[] p1 = hull.get(i);
+            int[] p2 = hull.get((i + 1) % n);
+            double ex = p2[0] - p1[0];
+            double ey = p2[1] - p1[1];
+            double len = Math.hypot(ex, ey);
+            if (len < 1e-9) {
+                continue;
+            }
+            double ux = ex / len;
+            double uy = ey / len;   // Kantenrichtung
+            double nx = -uy;
+            double ny = ux;         // Normale
+
+            double minU = Double.MAX_VALUE, maxU = -Double.MAX_VALUE;
+            double minV = Double.MAX_VALUE, maxV = -Double.MAX_VALUE;
+            for (int[] q : hull) {
+                double pu = q[0] * ux + q[1] * uy;
+                double pv = q[0] * nx + q[1] * ny;
+                minU = Math.min(minU, pu);
+                maxU = Math.max(maxU, pu);
+                minV = Math.min(minV, pv);
+                maxV = Math.max(maxV, pv);
+            }
+            double width = maxU - minU;
+            double height = maxV - minV;
+            double area = width * height;
+            if (area < bestArea) {
+                bestArea = area;
+                // Winkel der längeren Rechteckseite bestimmt die Ausrichtung.
+                bestAngle = width >= height
+                        ? Math.toDegrees(Math.atan2(uy, ux))
+                        : Math.toDegrees(Math.atan2(ny, nx));
+            }
+        }
+        return bestAngle;
+    }
+
+    /**
+     * Ermittelt die Bounding-Box des Cartoons (alle Panels + Bildunterschrift +
+     * Randabstand) im übergebenen Bild.
+     *
+     * @param source Originalbild des Kalenderblatts
+     * @return Rechteck in Originalkoordinaten oder {@code null}, wenn kein
+     *         plausibler Cartoon gefunden wurde
+     */
+    static Rectangle detectFrame(BufferedImage source) {
+        Mask mask = buildMask(source);
+        if (mask == null) {
+            return null;
+        }
+        int w = mask.w();
+        int h = mask.h();
+        int scale = mask.scale();
+        int srcW = source.getWidth();
+        int srcH = source.getHeight();
+
+        List<Component> components = findComponents(mask.dark(), w, h);
         Rectangle region = assembleCartoonRegion(components, w, h);
         if (region == null) {
             return null;
@@ -118,16 +300,10 @@ final class FrameDetector {
     private static Rectangle assembleCartoonRegion(List<Component> components, int w, int h) {
         // Panel-Kandidaten: große Komponenten in der linken Blatthälfte
         // (der Kalender rechts wird so ausgeschlossen).
-        List<Component> panels = new ArrayList<>();
-        for (Component c : components) {
-            boolean leftHalf = c.centerX() < w * 0.5;
-            boolean bigEnough = c.width() > w * 0.12 && c.height() > h * 0.03;
-            if (leftHalf && bigEnough) {
-                panels.add(c);
-            }
-        }
+        List<Component> panels = selectPanels(components, w, h);
 
-        if (panels.isEmpty()) {
+        Component primary = primaryPanel(panels);
+        if (primary == null) {
             // Fallback: größte randferne Komponente überhaupt.
             Component largest = null;
             for (Component c : components) {
@@ -141,15 +317,8 @@ final class FrameDetector {
             return new Rectangle(largest.minX, largest.minY, largest.width(), largest.height());
         }
 
-        // Primäres Panel = größtes; daran alle horizontal überlappenden
+        // Ausgehend vom größten Panel alle horizontal überlappenden
         // (übereinander gestapelten) Panels anschließen.
-        Component primary = panels.get(0);
-        for (Component c : panels) {
-            if (c.bboxArea() > primary.bboxArea()) {
-                primary = c;
-            }
-        }
-
         int left = primary.minX, right = primary.maxX, top = primary.minY, bottom = primary.maxY;
         for (Component c : panels) {
             if (horizontalOverlapRatio(c.minX, c.maxX, left, right) > 0.4) {
