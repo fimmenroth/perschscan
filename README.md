@@ -18,8 +18,9 @@ ist die **größte zusammenhängende dunkle Struktur** des Blatts.
    berühren (Scan-Schatten), werden ignoriert.
 3. Große Komponenten in der linken Blatthälfte gelten als **Cartoon-Panels**
    (der Kalender rechts wird damit ausgeschlossen). Ein Cartoon kann aus
-   **mehreren übereinander stehenden Panels** bestehen – horizontal
-   überlappende Panels werden zu einem Bereich vereinigt.
+   **mehreren Panels** bestehen – benachbarte Panels (übereinander, nebeneinander
+   oder als Raster, z. B. 2x2) werden über ihre Adjazenz zu einem Bereich
+   vereinigt.
 4. Eine **Bildunterschrift** direkt unter den Panels wird mit erfasst: Kleine
    Komponenten im Band unterhalb der Panels werden ausgehend von der
    Panel-Spalte horizontal verkettet. Eine größere Lücke (der Bundsteg zum
@@ -81,8 +82,9 @@ Dateien werden nicht überschrieben.
 * Cartoons werden vor dem Zuschnitt automatisch lotrecht ausgerichtet
   (Schräglage-Korrektur). Die manuelle `--rotate`-Drehung um 90° wird zuerst
   angewandt, danach die automatische Feinausrichtung.
-* Mehrteilige Cartoons (mehrere gestapelte Panels) und Bildunterschriften
-  unterhalb des Kastens werden mit zugeschnitten.
+* Mehrteilige Cartoons (mehrere Panels – gestapelt, nebeneinander oder als
+  Raster wie 2x2) und Bildunterschriften unterhalb des Kastens werden mit
+  zugeschnitten.
 * Wird auf einem Blatt kein plausibler Cartoon gefunden, wird die Seite mit
   einer Meldung übersprungen, statt einen falschen Ausschnitt zu speichern.
 * PDF-Seiten werden mit 300 dpi gerendert.

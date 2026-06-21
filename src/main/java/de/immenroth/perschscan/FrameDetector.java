@@ -317,15 +317,34 @@ final class FrameDetector {
             return new Rectangle(largest.minX, largest.minY, largest.width(), largest.height());
         }
 
-        // Ausgehend vom größten Panel alle horizontal überlappenden
-        // (übereinander gestapelten) Panels anschließen.
+        // Ausgehend vom größten Panel alle benachbarten Panels anschließen.
+        // Adjazenz heißt: kleine Lücke sowohl in x- als auch in y-Richtung. So
+        // werden nicht nur übereinander gestapelte Panels, sondern auch neben-
+        // und diagonal benachbarte (z. B. ein 2x2-Raster) zu einem Bereich
+        // vereinigt. Der Kalender rechts liefert keine Panels und bleibt außen vor.
         int left = primary.minX, right = primary.maxX, top = primary.minY, bottom = primary.maxY;
-        for (Component c : panels) {
-            if (horizontalOverlapRatio(c.minX, c.maxX, left, right) > 0.4) {
-                left = Math.min(left, c.minX);
-                right = Math.max(right, c.maxX);
-                top = Math.min(top, c.minY);
-                bottom = Math.max(bottom, c.maxY);
+        int tolX = (int) Math.round(0.08 * w);
+        int tolY = (int) Math.round(0.08 * h);
+        boolean[] absorbed = new boolean[panels.size()];
+        absorbed[panels.indexOf(primary)] = true;
+        boolean grew = true;
+        while (grew) {
+            grew = false;
+            for (int i = 0; i < panels.size(); i++) {
+                if (absorbed[i]) {
+                    continue;
+                }
+                Component c = panels.get(i);
+                int gapX = intervalGap(c.minX, c.maxX, left, right);
+                int gapY = intervalGap(c.minY, c.maxY, top, bottom);
+                if (gapX <= tolX && gapY <= tolY) {
+                    left = Math.min(left, c.minX);
+                    right = Math.max(right, c.maxX);
+                    top = Math.min(top, c.minY);
+                    bottom = Math.max(bottom, c.maxY);
+                    absorbed[i] = true;
+                    grew = true;
+                }
             }
         }
 
@@ -378,14 +397,9 @@ final class FrameDetector {
         return new Rectangle(capLeft, top, capRight - capLeft + 1, capBottom - top + 1);
     }
 
-    /** Anteil der Überlappung zweier Intervalle bezogen auf das kleinere. */
-    private static double horizontalOverlapRatio(int aMin, int aMax, int bMin, int bMax) {
-        int overlap = Math.min(aMax, bMax) - Math.max(aMin, bMin);
-        if (overlap <= 0) {
-            return 0;
-        }
-        int smaller = Math.min(aMax - aMin, bMax - bMin);
-        return smaller <= 0 ? 0 : (double) overlap / smaller;
+    /** Lücke zwischen zwei Intervallen; 0 bei Überlappung oder Berührung. */
+    private static int intervalGap(int aMin, int aMax, int bMin, int bMax) {
+        return Math.max(0, Math.max(aMin, bMin) - Math.min(aMax, bMax));
     }
 
     /**
