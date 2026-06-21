@@ -26,8 +26,11 @@ import org.apache.pdfbox.rendering.PDFRenderer;
  * und speichert ihn unter einem fortlaufenden Namen.
  *
  * <pre>
- *   Aufruf:  java -jar perschscan.jar &lt;eingabe&gt; [ausgabeordner]
+ *   Aufruf:  java -jar perschscan.jar [--rotate=&lt;90|-90&gt;] &lt;eingabe&gt; [ausgabeordner]
  *
+ *   --rotate=&lt;grad&gt; dreht jede Eingabeseite vor der Erkennung um +90 (im
+ *                   Uhrzeigersinn) bzw. -90 Grad (gegen den Uhrzeigersinn).
+ *                   Erlaubt: 90, -90 (bzw. 270), cw, ccw.
  *   &lt;eingabe&gt;       Datei (Bild oder PDF) oder Ordner mit Eingabedateien
  *   [ausgabeordner] Zielordner (Vorgabe: &lt;eingabe&gt;/cartoons bzw. ./cartoons)
  * </pre>
@@ -45,19 +48,42 @@ public final class CartoonCropper {
     private static final String OUTPUT_FORMAT = "png";
 
     public static void main(String[] args) {
-        if (args.length < 1 || isHelp(args[0])) {
+        // Optionen (--flag) und Positionsargumente trennen.
+        int rotation = 0;
+        List<String> positionals = new ArrayList<>();
+        for (String arg : args) {
+            if (isHelp(arg)) {
+                printUsage();
+                return;
+            }
+            if (arg.startsWith("--rotate=") || arg.startsWith("-r=")) {
+                Integer r = parseRotation(arg.substring(arg.indexOf('=') + 1));
+                if (r == null) {
+                    System.err.println("Ungültiger Wert für --rotate (erlaubt: 90, -90, cw, ccw).");
+                    System.exit(2);
+                }
+                rotation = r;
+            } else if (arg.startsWith("-")) {
+                System.err.println("Unbekannte Option: " + arg);
+                System.exit(2);
+            } else {
+                positionals.add(arg);
+            }
+        }
+
+        if (positionals.isEmpty()) {
             printUsage();
             return;
         }
 
-        Path input = Path.of(args[0]);
+        Path input = Path.of(positionals.get(0));
         if (!Files.exists(input)) {
             System.err.println("Eingabe nicht gefunden: " + input);
             System.exit(2);
         }
 
-        Path outputDir = args.length >= 2
-                ? Path.of(args[1])
+        Path outputDir = positionals.size() >= 2
+                ? Path.of(positionals.get(1))
                 : defaultOutputDir(input);
 
         try {
@@ -68,7 +94,7 @@ public final class CartoonCropper {
                 System.exit(1);
             }
 
-            new CartoonCropper(outputDir).run(inputs);
+            new CartoonCropper(outputDir, rotation).run(inputs);
         } catch (IOException e) {
             System.err.println("Fehler: " + e.getMessage());
             System.exit(1);
@@ -76,10 +102,13 @@ public final class CartoonCropper {
     }
 
     private final Path outputDir;
+    /** Drehung in Vielfachen von 90° im Uhrzeigersinn (-1, 0 oder +1). */
+    private final int quarterTurns;
     private int counter;
 
-    private CartoonCropper(Path outputDir) {
+    private CartoonCropper(Path outputDir, int rotationDegrees) {
         this.outputDir = outputDir;
+        this.quarterTurns = rotationDegrees / 90;
         this.counter = nextStartIndex(outputDir);
     }
 
@@ -87,8 +116,9 @@ public final class CartoonCropper {
         int saved = 0;
         for (Path file : inputs) {
             for (BufferedImage page : loadPages(file)) {
+                BufferedImage oriented = rotate(page, quarterTurns);
                 String label = file.getFileName().toString();
-                if (process(page, label)) {
+                if (process(oriented, label)) {
                     saved++;
                 }
             }
@@ -143,6 +173,45 @@ public final class CartoonCropper {
             }
         }
         return pages;
+    }
+
+    /**
+     * Dreht ein Bild um Vielfache von 90°. {@code +1} dreht im Uhrzeigersinn,
+     * {@code -1} gegen den Uhrzeigersinn; {@code 0} liefert das Bild unverändert.
+     */
+    private static BufferedImage rotate(BufferedImage src, int quarterTurns) {
+        int turns = ((quarterTurns % 4) + 4) % 4;
+        if (turns == 0) {
+            return src;
+        }
+        int w = src.getWidth();
+        int h = src.getHeight();
+        boolean swap = (turns % 2) != 0;
+        BufferedImage dst = new BufferedImage(swap ? h : w, swap ? w : h,
+                BufferedImage.TYPE_INT_RGB);
+
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int rgb = src.getRGB(x, y);
+                switch (turns) {
+                    case 1 -> dst.setRGB(h - 1 - y, x, rgb);          // 90° im Uhrzeigersinn
+                    case 2 -> dst.setRGB(w - 1 - x, h - 1 - y, rgb);  // 180°
+                    default -> dst.setRGB(y, w - 1 - x, rgb);         // 270° = 90° gegen Uhrzeigersinn
+                }
+            }
+        }
+        return dst;
+    }
+
+    /** Liest einen Rotationswert (90, -90, 270, cw, ccw) als Grad ein. */
+    private static Integer parseRotation(String value) {
+        String v = value.trim().toLowerCase(Locale.ROOT);
+        return switch (v) {
+            case "90", "cw" -> 90;
+            case "-90", "270", "ccw" -> -90;
+            case "0" -> 0;
+            default -> null;
+        };
     }
 
     /** Sammelt Eingabedateien aus einer Datei oder einem Ordner (sortiert). */
@@ -205,8 +274,11 @@ public final class CartoonCropper {
                 perschscan – schneidet Cartoons aus gescannten Kalenderblättern aus.
 
                 Aufruf:
-                  java -jar perschscan.jar <eingabe> [ausgabeordner]
+                  java -jar perschscan.jar [--rotate=<90|-90>] <eingabe> [ausgabeordner]
 
+                  --rotate=<grad>  dreht jede Eingabeseite vor der Erkennung:
+                                   90 bzw. cw  = 90 Grad im Uhrzeigersinn,
+                                   -90 bzw. ccw = 90 Grad gegen den Uhrzeigersinn.
                   <eingabe>        Bild (PNG/JPG/TIFF/BMP/GIF) oder PDF,
                                    oder ein Ordner mit solchen Dateien
                   [ausgabeordner]  Zielordner (Vorgabe: <eingabe>/cartoons)

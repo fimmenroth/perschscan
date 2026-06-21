@@ -54,8 +54,15 @@ java -jar target/perschscan.jar blatt.jpg
 
 # Ganzer Ordner mit Scans (PDF/PNG/JPG/TIFF/BMP/GIF):
 java -jar target/perschscan.jar ./scans ./cartoons
+
+# Quer eingescannte Vorlage vor der Erkennung um 90 Grad drehen:
+java -jar target/perschscan.jar --rotate=cw  ./scans   # im Uhrzeigersinn
+java -jar target/perschscan.jar --rotate=-90 ./scans   # gegen den Uhrzeigersinn
 ```
 
+* **`--rotate=<grad>`** – optional. Dreht jede Eingabeseite vor der Erkennung um
+  +90° (`90` bzw. `cw`, im Uhrzeigersinn) oder -90° (`-90`/`270` bzw. `ccw`,
+  gegen den Uhrzeigersinn). Nützlich, wenn die Blätter quer eingescannt wurden.
 * **`<eingabe>`** – eine Datei (Bild oder mehrseitiges PDF) oder ein Ordner mit
   solchen Dateien. Mehrseitige PDFs werden seitenweise verarbeitet.
 * **`[ausgabeordner]`** – optionaler Zielordner. Vorgabe: `<eingabe>/cartoons`.
