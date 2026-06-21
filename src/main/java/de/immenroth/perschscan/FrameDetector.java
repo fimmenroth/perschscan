@@ -2,19 +2,33 @@ package de.immenroth.perschscan;
 
 import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
- * Findet auf einem gescannten Kalenderblatt den rechteckigen Rahmen, der den
- * Cartoon umschließt.
+ * Findet auf einem gescannten Kalenderblatt den Bereich, der den Cartoon
+ * umschließt.
  *
- * <p>Die Kalenderblätter sind überwiegend weiß; der Cartoon sitzt in einem
- * kräftig schwarz umrandeten Kasten im oberen Bereich, daneben (rechts) steht
- * der Kalender als Text. Der Rahmen ist die größte zusammenhängende dunkle
- * Struktur des Blatts. Wir suchen daher die dunkle Zusammenhangskomponente mit
- * der größten Bounding-Box und liefern deren Begrenzung zurück.</p>
+ * <p>Die Kalenderblätter sind überwiegend weiß; der Cartoon sitzt links oben,
+ * der Kalender steht als Text rechts daneben. Ein Cartoon kann aus
+ * <em>mehreren</em> übereinander stehenden, schwarz umrandeten Bild-Panels
+ * bestehen, und unter den Panels kann eine zum Cartoon gehörende Bildunterschrift
+ * stehen. Beides wird mit erfasst.</p>
  *
- * <p>Aus Geschwindigkeits- und Speichergründen arbeitet die Erkennung auf einer
- * herunterskalierten Graustufenkopie; die gefundene Box wird anschließend auf
+ * <p>Vorgehen:</p>
+ * <ol>
+ *   <li>Graustufen + Otsu-Binarisierung (robust gegen Helligkeitsunterschiede).</li>
+ *   <li>Zusammenhangsanalyse (8er-Nachbarschaft) liefert alle dunklen
+ *       Komponenten samt Bounding-Box.</li>
+ *   <li>Große Komponenten in der linken Blatthälfte gelten als Cartoon-Panels;
+ *       horizontal überlappende Panels (gestapelt) werden zu einem Bereich
+ *       vereinigt.</li>
+ *   <li>Kleine Komponenten direkt unterhalb der Panels (in deren Spalte) werden
+ *       als Bildunterschrift erkannt und einbezogen.</li>
+ *   <li>Um das Ergebnis kommt ein Randabstand.</li>
+ * </ol>
+ *
+ * <p>Die Analyse läuft auf einer herunterskalierten Kopie; das Ergebnis wird auf
  * die Originalauflösung zurückgerechnet.</p>
  */
 final class FrameDetector {
@@ -25,18 +39,37 @@ final class FrameDetector {
     private FrameDetector() {
     }
 
+    /** Eine dunkle Zusammenhangskomponente in Analyse-Koordinaten. */
+    private record Component(int minX, int minY, int maxX, int maxY, int pixels) {
+        int width() {
+            return maxX - minX + 1;
+        }
+
+        int height() {
+            return maxY - minY + 1;
+        }
+
+        long bboxArea() {
+            return (long) width() * height();
+        }
+
+        int centerX() {
+            return (minX + maxX) / 2;
+        }
+    }
+
     /**
-     * Ermittelt die Bounding-Box des Cartoon-Rahmens im übergebenen Bild.
+     * Ermittelt die Bounding-Box des Cartoons (alle Panels + Bildunterschrift +
+     * Randabstand) im übergebenen Bild.
      *
      * @param source Originalbild des Kalenderblatts
      * @return Rechteck in Originalkoordinaten oder {@code null}, wenn kein
-     *         plausibler Rahmen gefunden wurde
+     *         plausibler Cartoon gefunden wurde
      */
     static Rectangle detectFrame(BufferedImage source) {
         int srcW = source.getWidth();
         int srcH = source.getHeight();
 
-        // Skalierungsfaktor für die Analyse bestimmen.
         int maxEdge = Math.max(srcW, srcH);
         int scale = Math.max(1, (int) Math.round(maxEdge / (double) ANALYSIS_MAX_EDGE));
         int w = srcW / scale;
@@ -46,40 +79,154 @@ final class FrameDetector {
         }
 
         int[] gray = toGray(source, scale, w, h);
-        int threshold = otsuThreshold(gray);
-
-        // dark[i] == true  =>  Pixel gehört zu (dunkler) Vordergrundstruktur.
+        // Otsu liefert die Trennschwelle. Inklusiv (<=) und mit kleinem
+        // Sicherheitsaufschlag, damit bei sehr sauberen Vorlagen (kaum Rauschen,
+        // dünne Linien) der Schwellwert nicht genau auf dem Tinten-Grauwert
+        // landet und die Tinte dann fälschlich als Hintergrund gilt.
+        int threshold = otsuThreshold(gray) + 1;
         boolean[] dark = new boolean[w * h];
         for (int i = 0; i < gray.length; i++) {
-            dark[i] = gray[i] < threshold;
+            dark[i] = gray[i] <= threshold;
         }
 
-        Rectangle best = largestComponentBounds(dark, w, h);
-        if (best == null) {
+        List<Component> components = findComponents(dark, w, h);
+        Rectangle region = assembleCartoonRegion(components, w, h);
+        if (region == null) {
             return null;
         }
 
-        // Zurückrechnen auf Originalauflösung und auf das Bild begrenzen.
-        int x0 = clamp(best.x * scale, 0, srcW);
-        int y0 = clamp(best.y * scale, 0, srcH);
-        int x1 = clamp((best.x + best.width) * scale, 0, srcW);
-        int y1 = clamp((best.y + best.height) * scale, 0, srcH);
+        // Randabstand und Zurückrechnen auf Originalauflösung.
+        int margin = Math.max(6, (int) Math.round(0.012 * Math.max(w, h)));
+        int sx0 = clamp(region.x - margin, 0, w);
+        int sy0 = clamp(region.y - margin, 0, h);
+        int sx1 = clamp(region.x + region.width + margin, 0, w);
+        int sy1 = clamp(region.y + region.height + margin, 0, h);
+
+        int x0 = clamp(sx0 * scale, 0, srcW);
+        int y0 = clamp(sy0 * scale, 0, srcH);
+        int x1 = clamp(sx1 * scale, 0, srcW);
+        int y1 = clamp(sy1 * scale, 0, srcH);
 
         Rectangle result = new Rectangle(x0, y0, x1 - x0, y1 - y0);
-        return isPlausibleFrame(result, srcW, srcH) ? result : null;
+        return isPlausible(result, srcW, srcH) ? result : null;
     }
 
     /**
-     * Liefert die Bounding-Box der dunklen 8er-Zusammenhangskomponente mit der
-     * größten Flächenausdehnung. Komponenten, die den Bildrand berühren (z. B.
-     * Scan-Schatten am Seitenrand), werden verworfen.
+     * Baut aus den Komponenten den Cartoon-Bereich: ein oder mehrere gestapelte
+     * Panels plus eine eventuelle Bildunterschrift darunter.
      */
-    private static Rectangle largestComponentBounds(boolean[] dark, int w, int h) {
+    private static Rectangle assembleCartoonRegion(List<Component> components, int w, int h) {
+        // Panel-Kandidaten: große Komponenten in der linken Blatthälfte
+        // (der Kalender rechts wird so ausgeschlossen).
+        List<Component> panels = new ArrayList<>();
+        for (Component c : components) {
+            boolean leftHalf = c.centerX() < w * 0.5;
+            boolean bigEnough = c.width() > w * 0.12 && c.height() > h * 0.03;
+            if (leftHalf && bigEnough) {
+                panels.add(c);
+            }
+        }
+
+        if (panels.isEmpty()) {
+            // Fallback: größte randferne Komponente überhaupt.
+            Component largest = null;
+            for (Component c : components) {
+                if (largest == null || c.bboxArea() > largest.bboxArea()) {
+                    largest = c;
+                }
+            }
+            if (largest == null) {
+                return null;
+            }
+            return new Rectangle(largest.minX, largest.minY, largest.width(), largest.height());
+        }
+
+        // Primäres Panel = größtes; daran alle horizontal überlappenden
+        // (übereinander gestapelten) Panels anschließen.
+        Component primary = panels.get(0);
+        for (Component c : panels) {
+            if (c.bboxArea() > primary.bboxArea()) {
+                primary = c;
+            }
+        }
+
+        int left = primary.minX, right = primary.maxX, top = primary.minY, bottom = primary.maxY;
+        for (Component c : panels) {
+            if (horizontalOverlapRatio(c.minX, c.maxX, left, right) > 0.4) {
+                left = Math.min(left, c.minX);
+                right = Math.max(right, c.maxX);
+                top = Math.min(top, c.minY);
+                bottom = Math.max(bottom, c.maxY);
+            }
+        }
+
+        // Bildunterschrift unter den Panels erfassen.
+        //
+        // Kandidaten sind kleine Komponenten in einem Band direkt unterhalb der
+        // Panels. Sie werden ausgehend von der Panel-Spalte horizontal verkettet:
+        // Wörter/Zeichen, die nur durch eine kleine Lücke getrennt sind, gehören
+        // zur Unterschrift; eine größere Lücke (der Bundsteg zum Kalender hin)
+        // beendet die Verkettung – so wird der rechts stehende Kalender nicht
+        // mit eingefangen. Das funktioniert auch über mehrere Zeilen.
+        int panelBottom = bottom;
+        int lookDown = (int) Math.round(0.08 * h);
+        int maxLineHeight = (int) Math.round(0.06 * h);
+        List<Component> caption = new ArrayList<>();
+        for (Component c : components) {
+            if (panels.contains(c)) {
+                continue;
+            }
+            boolean inBand = c.minY >= panelBottom && c.minY <= panelBottom + lookDown;
+            boolean textSized = c.height() <= maxLineHeight;
+            boolean leftish = c.centerX() < w * 0.6;
+            if (inBand && textSized && leftish) {
+                caption.add(c);
+            }
+        }
+
+        int maxGap = (int) Math.round(0.035 * w);
+        int capLeft = left, capRight = right, capBottom = bottom;
+        boolean changed = true;
+        while (changed) {
+            changed = false;
+            for (Component c : caption) {
+                boolean horizontallyNear = c.maxX >= capLeft - maxGap
+                        && c.minX <= capRight + maxGap;
+                if (horizontallyNear && c.centerX() < w * 0.6) {
+                    int nl = Math.min(capLeft, c.minX);
+                    int nr = Math.max(capRight, c.maxX);
+                    int nb = Math.max(capBottom, c.maxY);
+                    if (nl != capLeft || nr != capRight || nb != capBottom) {
+                        capLeft = nl;
+                        capRight = nr;
+                        capBottom = nb;
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        return new Rectangle(capLeft, top, capRight - capLeft + 1, capBottom - top + 1);
+    }
+
+    /** Anteil der Überlappung zweier Intervalle bezogen auf das kleinere. */
+    private static double horizontalOverlapRatio(int aMin, int aMax, int bMin, int bMax) {
+        int overlap = Math.min(aMax, bMax) - Math.max(aMin, bMin);
+        if (overlap <= 0) {
+            return 0;
+        }
+        int smaller = Math.min(aMax - aMin, bMax - bMin);
+        return smaller <= 0 ? 0 : (double) overlap / smaller;
+    }
+
+    /**
+     * Findet alle dunklen 8er-Zusammenhangskomponenten. Komponenten, die den
+     * Bildrand berühren (z. B. Scan-Schatten am Seitenrand), werden verworfen.
+     */
+    private static List<Component> findComponents(boolean[] dark, int w, int h) {
         boolean[] visited = new boolean[w * h];
         int[] stack = new int[w * h];
-
-        long bestArea = 0;
-        Rectangle bestRect = null;
+        List<Component> result = new ArrayList<>();
 
         for (int start = 0; start < dark.length; start++) {
             if (!dark[start] || visited[start]) {
@@ -90,13 +237,14 @@ final class FrameDetector {
             stack[sp++] = start;
             visited[start] = true;
 
-            int minX = w, minY = h, maxX = 0, maxY = 0;
+            int minX = w, minY = h, maxX = 0, maxY = 0, pixels = 0;
             boolean touchesEdge = false;
 
             while (sp > 0) {
                 int idx = stack[--sp];
                 int x = idx % w;
                 int y = idx / w;
+                pixels++;
 
                 if (x < minX) minX = x;
                 if (y < minY) minY = y;
@@ -106,8 +254,6 @@ final class FrameDetector {
                     touchesEdge = true;
                 }
 
-                // 8er-Nachbarschaft, damit leicht schräg gescannte Rahmen
-                // zusammenhängend bleiben.
                 for (int dy = -1; dy <= 1; dy++) {
                     int ny = y + dy;
                     if (ny < 0 || ny >= h) continue;
@@ -124,26 +270,18 @@ final class FrameDetector {
                 }
             }
 
-            if (touchesEdge) {
-                continue;
-            }
-
-            long area = (long) (maxX - minX + 1) * (maxY - minY + 1);
-            if (area > bestArea) {
-                bestArea = area;
-                bestRect = new Rectangle(minX, minY, maxX - minX + 1, maxY - minY + 1);
+            if (!touchesEdge) {
+                result.add(new Component(minX, minY, maxX, maxY, pixels));
             }
         }
-
-        return bestRect;
+        return result;
     }
 
     /**
-     * Plausibilitätsprüfung: Der Cartoon-Rahmen hat eine gewisse Mindestgröße
-     * und füllt nicht das ganze Blatt aus (sonst wäre es vermutlich der
-     * Seitenrand des Scans).
+     * Plausibilitätsprüfung: Der Cartoon hat eine gewisse Mindestgröße und füllt
+     * nicht das ganze Blatt aus (sonst vermutlich der Seitenrand des Scans).
      */
-    private static boolean isPlausibleFrame(Rectangle r, int srcW, int srcH) {
+    private static boolean isPlausible(Rectangle r, int srcW, int srcH) {
         double areaRatio = (double) r.width * r.height / ((double) srcW * srcH);
         boolean bigEnough = r.width > srcW * 0.08 && r.height > srcH * 0.04;
         boolean notWholePage = areaRatio < 0.92;
@@ -161,7 +299,6 @@ final class FrameDetector {
                 int r = (rgb >> 16) & 0xFF;
                 int g = (rgb >> 8) & 0xFF;
                 int b = rgb & 0xFF;
-                // Rec. 601 Luma.
                 gray[y * w + x] = (int) (0.299 * r + 0.587 * g + 0.114 * b);
             }
         }

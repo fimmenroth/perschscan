@@ -13,10 +13,20 @@ ist die **größte zusammenhängende dunkle Struktur** des Blatts.
 
 1. Die Seite wird in Graustufen umgewandelt und mit einem **Otsu-Schwellwert**
    binarisiert (robust gegen unterschiedliche Helligkeit von Scans/Fotos).
-2. Über eine **Zusammenhangsanalyse (8er-Nachbarschaft)** wird die dunkle
-   Komponente mit der größten Bounding-Box gesucht – das ist der Cartoon-Rahmen.
-   Komponenten, die den Bildrand berühren (Scan-Schatten), werden ignoriert.
-3. Das Original wird auf diese Bounding-Box zugeschnitten und gespeichert.
+2. Über eine **Zusammenhangsanalyse (8er-Nachbarschaft)** werden alle dunklen
+   Komponenten samt Bounding-Box bestimmt. Komponenten, die den Bildrand
+   berühren (Scan-Schatten), werden ignoriert.
+3. Große Komponenten in der linken Blatthälfte gelten als **Cartoon-Panels**
+   (der Kalender rechts wird damit ausgeschlossen). Ein Cartoon kann aus
+   **mehreren übereinander stehenden Panels** bestehen – horizontal
+   überlappende Panels werden zu einem Bereich vereinigt.
+4. Eine **Bildunterschrift** direkt unter den Panels wird mit erfasst: Kleine
+   Komponenten im Band unterhalb der Panels werden ausgehend von der
+   Panel-Spalte horizontal verkettet. Eine größere Lücke (der Bundsteg zum
+   Kalender) beendet die Verkettung, sodass der Kalender nicht hineinrutscht.
+   Mehrzeilige Unterschriften werden komplett erfasst.
+5. Um das Ergebnis kommt ein **Randabstand**, dann wird das Original
+   zugeschnitten und gespeichert.
 
 Die Analyse läuft auf einer herunterskalierten Kopie (schnell und
 speicherschonend); der Zuschnitt erfolgt anschließend in voller Auflösung.
@@ -56,9 +66,8 @@ Dateien werden nicht überschrieben.
 
 ## Hinweise
 
-* Zugeschnitten wird exakt der umrandete Cartoon-Kasten. Bildunterschriften, die
-  *außerhalb* des Rahmens unter dem Kasten stehen, gehören damit nicht zum
-  Ausschnitt. (Text innerhalb des Rahmens – Sprech­blasen usw. – bleibt erhalten.)
-* Wird auf einem Blatt kein plausibler Rahmen gefunden, wird die Seite mit einer
-  Meldung übersprungen, statt einen falschen Ausschnitt zu speichern.
+* Mehrteilige Cartoons (mehrere gestapelte Panels) und Bildunterschriften
+  unterhalb des Kastens werden mit zugeschnitten.
+* Wird auf einem Blatt kein plausibler Cartoon gefunden, wird die Seite mit
+  einer Meldung übersprungen, statt einen falschen Ausschnitt zu speichern.
 * PDF-Seiten werden mit 300 dpi gerendert.
