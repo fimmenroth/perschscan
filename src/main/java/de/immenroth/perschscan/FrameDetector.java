@@ -56,6 +56,11 @@ final class FrameDetector {
         int centerX() {
             return (minX + maxX) / 2;
         }
+
+        /** Anteil dunkler Pixel an der Bounding-Box (Füllgrad). */
+        double fillRatio() {
+            return (double) pixels / bboxArea();
+        }
     }
 
     /** Binärmaske in Analyse-Auflösung samt Skalierungsfaktor. */
@@ -149,13 +154,23 @@ final class FrameDetector {
         return a;
     }
 
-    /** Große Komponenten in der linken Blatthälfte (Cartoon-Panels). */
+    /**
+     * Liefert die Cartoon-Panels: große, <em>umrandete</em> Komponenten.
+     *
+     * <p>Ein Panel ist ein Kasten mit dünnem Rahmen und überwiegend weißer
+     * Fläche – also eine große Bounding-Box bei niedrigem Füllgrad. Der Kalender
+     * rechts besteht aus Text und liefert keine so großen Komponenten; selbst
+     * große Ziffern (z. B. „23“) sind entweder zu schmal oder zu kompakt gefüllt.
+     * Dadurch lässt sich auf die feste Beschränkung auf die linke Blatthälfte
+     * verzichten – Panels werden auch erkannt, wenn das Raster breiter ist oder
+     * über die Blattmitte hinausragt.</p>
+     */
     private static List<Component> selectPanels(List<Component> components, int w, int h) {
         List<Component> panels = new ArrayList<>();
         for (Component c : components) {
-            boolean leftHalf = c.centerX() < w * 0.5;
             boolean bigEnough = c.width() > w * 0.12 && c.height() > h * 0.03;
-            if (leftHalf && bigEnough) {
+            boolean framedBox = c.fillRatio() < 0.5;
+            if (bigEnough && framedBox) {
                 panels.add(c);
             }
         }
@@ -317,35 +332,17 @@ final class FrameDetector {
             return new Rectangle(largest.minX, largest.minY, largest.width(), largest.height());
         }
 
-        // Ausgehend vom größten Panel alle benachbarten Panels anschließen.
-        // Adjazenz heißt: kleine Lücke sowohl in x- als auch in y-Richtung. So
-        // werden nicht nur übereinander gestapelte Panels, sondern auch neben-
-        // und diagonal benachbarte (z. B. ein 2x2-Raster) zu einem Bereich
-        // vereinigt. Der Kalender rechts liefert keine Panels und bleibt außen vor.
+        // Ein Kalenderblatt trägt genau einen Cartoon; dessen Panels sind die
+        // einzigen großen umrandeten Kästen. Daher werden ALLE erkannten Panels
+        // zu einem Bereich vereinigt – egal ob einzeln, gestapelt, nebeneinander
+        // oder als Raster (z. B. 2x2) angeordnet und unabhängig von der Größe der
+        // Zwischenräume. Der Kalender liefert keine Panels und bleibt außen vor.
         int left = primary.minX, right = primary.maxX, top = primary.minY, bottom = primary.maxY;
-        int tolX = (int) Math.round(0.08 * w);
-        int tolY = (int) Math.round(0.08 * h);
-        boolean[] absorbed = new boolean[panels.size()];
-        absorbed[panels.indexOf(primary)] = true;
-        boolean grew = true;
-        while (grew) {
-            grew = false;
-            for (int i = 0; i < panels.size(); i++) {
-                if (absorbed[i]) {
-                    continue;
-                }
-                Component c = panels.get(i);
-                int gapX = intervalGap(c.minX, c.maxX, left, right);
-                int gapY = intervalGap(c.minY, c.maxY, top, bottom);
-                if (gapX <= tolX && gapY <= tolY) {
-                    left = Math.min(left, c.minX);
-                    right = Math.max(right, c.maxX);
-                    top = Math.min(top, c.minY);
-                    bottom = Math.max(bottom, c.maxY);
-                    absorbed[i] = true;
-                    grew = true;
-                }
-            }
+        for (Component c : panels) {
+            left = Math.min(left, c.minX);
+            right = Math.max(right, c.maxX);
+            top = Math.min(top, c.minY);
+            bottom = Math.max(bottom, c.maxY);
         }
 
         // Bildunterschrift unter den Panels erfassen.
@@ -395,11 +392,6 @@ final class FrameDetector {
         }
 
         return new Rectangle(capLeft, top, capRight - capLeft + 1, capBottom - top + 1);
-    }
-
-    /** Lücke zwischen zwei Intervallen; 0 bei Überlappung oder Berührung. */
-    private static int intervalGap(int aMin, int aMax, int bMin, int bMax) {
-        return Math.max(0, Math.max(aMin, bMin) - Math.min(aMax, bMax));
     }
 
     /**
