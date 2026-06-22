@@ -3,6 +3,7 @@ package de.immenroth.perschscan;
 import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -96,12 +97,13 @@ final class FrameDetector {
      * das Bild um den negativen Rückgabewert. {@code 0}, wenn keine zuverlässige
      * Schätzung möglich ist.
      *
-     * <p>Verfahren: Projektionsprofil. Die dunklen Punkte des größten Panels
-     * werden für viele Probewinkel auf die y-Achse projiziert; bei achsparalleler
-     * Ausrichtung fallen die geraden Panelkanten auf wenige Zeilen zusammen, das
-     * Profil wird also „spitz“ (hohe Energie = Summe der Quadrate). Das ist robust
-     * auch für gefüllte oder unregelmäßig berandete Panels – anders als ein
-     * Minimal-Rechteck, das an Vorsprüngen kippt.</p>
+     * <p>Verfahren: Die vier Kanten des größten Panels werden abgetastet (oberster
+     * bzw. unterster dunkler Pixel je Spalte, linker bzw. rechter je Zeile) und
+     * jeweils per Theil-Sen (Median der paarweisen Steigungen) robust zu einer
+     * Geraden gefittet. Aus den Kantensteigungen ergibt sich der Drehwinkel. Das
+     * funktioniert für umrandete wie gefüllte Panels und ist – anders als ein
+     * Projektionsprofil über das (achsparallele) Pixelraster – frei von
+     * Raster-Aliasing bei 0°.</p>
      */
     static double estimateSkewDegrees(BufferedImage source) {
         Mask mask = buildMask(source);
@@ -112,82 +114,115 @@ final class FrameDetector {
         int h = mask.h();
         boolean[] dark = mask.dark();
 
-        Component primary = primaryPanel(selectPanels(findComponents(dark, w, h), w, h));
-        if (primary == null) {
+        Component p = primaryPanel(selectPanels(findComponents(dark, w, h), w, h));
+        if (p == null) {
             return 0;
         }
 
-        // Dunkle Punkte im Panel-Bereich einsammeln (auf ~4000 unterabgetastet).
-        int bw = primary.width();
-        int bh = primary.height();
-        int step = Math.max(1, (int) Math.sqrt((double) bw * bh / 4000.0));
-        List<int[]> pts = new ArrayList<>();
-        for (int y = primary.minY; y <= primary.maxY; y += step) {
-            int row = y * w;
-            for (int x = primary.minX; x <= primary.maxX; x += step) {
-                if (dark[row + x]) {
-                    pts.add(new int[]{x, y});
-                }
+        // Kantenpunkte sammeln.
+        List<double[]> top = new ArrayList<>();
+        List<double[]> bottom = new ArrayList<>();
+        for (int x = p.minX(); x <= p.maxX(); x++) {
+            Integer y0 = firstDarkInColumn(dark, w, x, p.minY(), p.maxY(), 1);
+            if (y0 != null) {
+                top.add(new double[]{x, y0});
+            }
+            Integer y1 = firstDarkInColumn(dark, w, x, p.maxY(), p.minY(), -1);
+            if (y1 != null) {
+                bottom.add(new double[]{x, y1});
             }
         }
-        if (pts.size() < 50) {
+        List<double[]> leftE = new ArrayList<>();
+        List<double[]> rightE = new ArrayList<>();
+        for (int y = p.minY(); y <= p.maxY(); y++) {
+            Integer x0 = firstDarkInRow(dark, w, y, p.minX(), p.maxX(), 1);
+            if (x0 != null) {
+                leftE.add(new double[]{y, x0});
+            }
+            Integer x1 = firstDarkInRow(dark, w, y, p.maxX(), p.minX(), -1);
+            if (x1 != null) {
+                rightE.add(new double[]{y, x1});
+            }
+        }
+
+        // Kantenwinkel sammeln (waagerechte Kanten: Steigung dy/dx; senkrechte
+        // Kanten: Steigung dx/dy, daher negiert).
+        List<Double> angles = new ArrayList<>();
+        addAngle(angles, theilSen(top), false);
+        addAngle(angles, theilSen(bottom), false);
+        addAngle(angles, theilSen(leftE), true);
+        addAngle(angles, theilSen(rightE), true);
+        if (angles.isEmpty()) {
             return 0;
         }
 
-        double cx = (primary.minX + primary.maxX) / 2.0;
-        double cy = (primary.minY + primary.maxY) / 2.0;
-        int maxR = (int) Math.ceil(Math.hypot(bw, bh)) + 2;
-
-        // Grobsuche, dann Feinsuche um das Maximum.
-        double best = searchSkew(pts, cx, cy, maxR, -15, 15, 1.0, 0);
-        best = searchSkew(pts, cx, cy, maxR, best - 1.0, best + 1.0, 0.1, best);
-        return Math.abs(best) < 0.1 ? 0 : best;
+        Collections.sort(angles);
+        double skew = angles.get(angles.size() / 2);   // Median der Kantenwinkel
+        return Math.abs(skew) < 0.1 ? 0 : skew;
     }
 
-    /** Winkel (Grad) mit maximaler Projektionsenergie im Bereich [lo, hi]. */
-    private static double searchSkew(List<int[]> pts, double cx, double cy, int maxR,
-                                     double lo, double hi, double stepDeg, double fallback) {
-        double bestAngle = fallback;
-        long bestScore = -1;
-        for (double a = lo; a <= hi + 1e-9; a += stepDeg) {
-            long score = projectionEnergy(pts, cx, cy, maxR, a);
-            if (score > bestScore) {
-                bestScore = score;
-                bestAngle = a;
+    /** Fügt {@code atan(slope)} (ggf. negiert für senkrechte Kanten) hinzu. */
+    private static void addAngle(List<Double> angles, Double slope, boolean vertical) {
+        if (slope != null && Math.abs(slope) < 0.5) {   // > ~26° ist keine Schräglage mehr
+            double deg = Math.toDegrees(Math.atan(slope));
+            angles.add(vertical ? -deg : deg);
+        }
+    }
+
+    /** Erste dunkle Zeile y in Spalte {@code x}, von {@code from} bis {@code to}. */
+    private static Integer firstDarkInColumn(boolean[] dark, int w, int x,
+                                             int from, int to, int dir) {
+        for (int y = from; dir > 0 ? y <= to : y >= to; y += dir) {
+            if (dark[y * w + x]) {
+                return y;
             }
         }
-        return bestAngle;
+        return null;
+    }
+
+    /** Erste dunkle Spalte x in Zeile {@code y}, von {@code from} bis {@code to}. */
+    private static Integer firstDarkInRow(boolean[] dark, int w, int y,
+                                          int from, int to, int dir) {
+        int row = y * w;
+        for (int x = from; dir > 0 ? x <= to : x >= to; x += dir) {
+            if (dark[row + x]) {
+                return x;
+            }
+        }
+        return null;
     }
 
     /**
-     * Energie des Zeilen- und Spalten-Projektionsprofils, wenn die Punkte um den
-     * Winkel rotiert werden. Hoher Wert = scharfe Profile = achsparallele Kanten.
+     * Robuste Geradensteigung (Theil-Sen): Median der Steigungen aller Punktpaare
+     * mit ausreichendem Abstand der unabhängigen Koordinate. {@code null} bei zu
+     * wenigen Punkten.
      */
-    private static long projectionEnergy(List<int[]> pts, double cx, double cy,
-                                         int maxR, double angleDeg) {
-        double rad = Math.toRadians(angleDeg);
-        double s = Math.sin(rad);
-        double c = Math.cos(rad);
-        int size = 2 * maxR + 1;
-        int[] rows = new int[size];
-        int[] cols = new int[size];
-        for (int[] p : pts) {
-            double dx = p[0] - cx;
-            double dy = p[1] - cy;
-            int ry = (int) Math.round(-dx * s + dy * c) + maxR;
-            int rx = (int) Math.round(dx * c + dy * s) + maxR;
-            if (ry >= 0 && ry < size) {
-                rows[ry]++;
-            }
-            if (rx >= 0 && rx < size) {
-                cols[rx]++;
+    private static Double theilSen(List<double[]> pts) {
+        int n = pts.size();
+        if (n < 20) {
+            return null;
+        }
+        // Auf ~120 Punkte ausdünnen, damit die O(n^2)-Paarbildung günstig bleibt.
+        int stride = Math.max(1, n / 120);
+        List<double[]> s = new ArrayList<>();
+        for (int i = 0; i < n; i += stride) {
+            s.add(pts.get(i));
+        }
+        double minSep = Math.max(5.0, (s.get(s.size() - 1)[0] - s.get(0)[0]) * 0.2);
+        List<Double> slopes = new ArrayList<>();
+        for (int i = 0; i < s.size(); i++) {
+            for (int j = i + 1; j < s.size(); j++) {
+                double di = s.get(j)[0] - s.get(i)[0];
+                if (di >= minSep) {
+                    slopes.add((s.get(j)[1] - s.get(i)[1]) / di);
+                }
             }
         }
-        long energy = 0;
-        for (int i = 0; i < size; i++) {
-            energy += (long) rows[i] * rows[i] + (long) cols[i] * cols[i];
+        if (slopes.size() < 10) {
+            return null;
         }
-        return energy;
+        Collections.sort(slopes);
+        return slopes.get(slopes.size() / 2);
     }
 
     /**
