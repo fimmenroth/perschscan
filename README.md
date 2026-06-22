@@ -29,12 +29,13 @@ ist die **größte zusammenhängende dunkle Struktur** des Blatts.
    Panel-Spalte horizontal verkettet. Eine größere Lücke (der Bundsteg zum
    Kalender) beendet die Verkettung, sodass der Kalender nicht hineinrutscht.
    Mehrzeilige Unterschriften werden komplett erfasst.
-5. Vor dem Zuschnitt wird der Cartoon **lotrecht ausgerichtet**: Über ein
-   Projektionsprofil der Panel-Pixel wird die Schräglage bestimmt (der Winkel,
-   bei dem die geraden Panelkanten am schärfsten zusammenfallen) und die Seite
-   gegengedreht, sodass der Rahmen achsparallel steht (Bilinear-Interpolation,
-   neue Flächen weiß). Das ist auch für gefüllte/dunkle Panels robust und
-   geschieht automatisch bei jedem Lauf.
+5. Vor dem Zuschnitt wird der Cartoon **lotrecht ausgerichtet**: Die vier Kanten
+   des größten Panels werden abgetastet und per Theil-Sen (Median der paarweisen
+   Steigungen) robust zu Geraden gefittet; aus den Kantensteigungen ergibt sich
+   der Drehwinkel, um den die Seite gegengedreht wird (Bilinear-Interpolation,
+   neue Flächen weiß). Das ist robust für umrandete wie gefüllte Panels und – im
+   Gegensatz zu einem Projektionsprofil über das Pixelraster – frei von
+   Raster-Aliasing bei 0°. Die Korrektur geschieht automatisch bei jedem Lauf.
 6. Um das Ergebnis kommt ein **Randabstand**, dann wird das Original
    zugeschnitten und gespeichert.
 
